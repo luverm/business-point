@@ -505,6 +505,13 @@ function renderDashboard() {
   if (k.zonderType) note.append(h('div', { class: 'note', text: k.zonderType + (k.zonderType === 1 ? ' definitieve boeking telt' : ' definitieve boekingen tellen') + ' niet mee omdat Activiteitstype ontbreekt. Zet in Invoer het filter Alleen aandachtspunten aan om ze te vinden.' }));
 
   const kaart = (lbl, real, doel, doelNu, fmt, extra = {}) => {
+    if (extra.deel != null) {
+      const aandeel = extra.deel ? real / extra.deel : null;
+      return h('div', { class: 'kpi' },
+        h('span', { class: 'lbl', text: lbl }),
+        h('span', { class: 'val', text: fmt(real) }),
+        h('span', { class: 'sub', text: (aandeel != null ? fPct.format(aandeel) + ' van verhuur en F&B · ' : '') + 'samen doel ' + fmt(doel) + (doel ? ' · ' + fPct.format(extra.deel / doel) : '') }));
+    }
     const pct = doel ? real / doel : null;
     const voor = doelNu != null && doelNu > 0 && doel ? real - doelNu : null;
     let sub = (extra.laag ? 'Plafond ' : 'Doel ') + fmt(doel);
@@ -514,7 +521,6 @@ function renderDashboard() {
       h('span', { class: 'lbl', text: lbl }),
       h('span', { class: 'val', text: fmt(real) }),
       prog(real, doel, doelNu, extra.laag),
-      extra.extra ? h('span', { class: 'sub', text: extra.extra }) : null,
       h('span', { class: 'sub' }, sub, voor != null && doel ? h('span', { class: st, text: ' · ' + (extra.laag ? (real <= doelNu ? 'binnen budget' : 'boven budget tot nu') : (voor >= 0 ? 'voor op schema' : (extra.eur ? eurK(-voor) : fInt.format(-voor)) + ' achter op schema')) }) : null),
     );
   };
@@ -522,7 +528,8 @@ function renderDashboard() {
   const tnTot = tn('verhuur') + tn('kampen');
   $('#d-kpis').replaceChildren(
     kaart('Totale omzet', k.totaal, som('verhuur') + som('kampen'), tnTot, eurK, { hero: true, eur: true }),
-    kaart('Verhuur en F&B', k.verhuur, som('verhuur'), tn('verhuur'), eurK, { eur: true, extra: 'Zaalhuur ' + eurK(k.zaalhuur) + ' · F&B ' + eurK(k.fb) }),
+    kaart('Zaalhuur', k.zaalhuur, som('verhuur'), tn('verhuur'), eurK, { eur: true, deel: k.verhuur }),
+    kaart('F&B', k.fb, som('verhuur'), tn('verhuur'), eurK, { eur: true, deel: k.verhuur }),
     kaart('Voetbalkampen', k.kampen, som('kampen'), tn('kampen'), eurK, { eur: true }),
     kaart('Vergaderboekingen', k.boekingen, som('boekingen'), tn('boekingen'), (v) => fInt.format(v)),
     kaart('Vergadergasten', k.gasten, som('gasten'), tn('gasten'), (v) => fInt.format(v)),
