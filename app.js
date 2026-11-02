@@ -65,6 +65,8 @@ const ym = (d) => (typeof d === 'string' && d.length >= 7 ? d.slice(0, 7) : '');
 const jaarVan = (d) => (typeof d === 'string' && d.length >= 4 ? Number(d.slice(0, 4)) : null);
 const maandVan = (d) => (typeof d === 'string' && d.length >= 7 ? Number(d.slice(5, 7)) : null);
 const omzetVan = (r) => num(r.zaalhuur) + num(r.fb) + num(r.omzet_overnachtingen);
+/* Omzet die meetelt voor de doelen: zaalhuur en F&B, zonder hotelovernachtingen */
+const omzetDoel = (r) => num(r.zaalhuur) + num(r.fb);
 const isDef = (r) => r.status === 'Definitief';
 const sum = (a, f) => a.reduce((s, x) => s + f(x), 0);
 
@@ -107,16 +109,18 @@ function signalen(r, vandaag) {
 
 /* KPI-dashboard: op datum bijeenkomst, alleen definitief */
 function dashboardMaanden(regels, jaar) {
-  const out = Array.from({ length: 12 }, (_, i) => ({ maand: i + 1, verhuur: 0, kampen: 0, boekingen: 0, gasten: 0, dagdelen: 0, events20: 0 }));
+  const out = Array.from({ length: 12 }, (_, i) => ({ maand: i + 1, verhuur: 0, zaalhuur: 0, fb: 0, kampen: 0, boekingen: 0, gasten: 0, dagdelen: 0, events20: 0, nachten: 0, hotel: 0 }));
   regels.forEach((r) => {
     if (!isDef(r) || jaarVan(r.bijeenkomst) !== jaar) return;
     const m = out[maandVan(r.bijeenkomst) - 1];
     if (!m) return;
+    // Hotelovernachtingen: alleen ter inzicht, voor elke definitieve boeking
+    m.nachten += num(r.overnachtingen); m.hotel += num(r.omzet_overnachtingen);
     if (r.activiteitstype === 'Vergadering') {
-      m.verhuur += omzetVan(r); m.boekingen += 1; m.gasten += num(r.personen); m.dagdelen += num(r.dagdelen);
+      m.verhuur += omzetDoel(r); m.zaalhuur += num(r.zaalhuur); m.fb += num(r.fb); m.boekingen += 1; m.gasten += num(r.personen); m.dagdelen += num(r.dagdelen);
       if (num(r.personen) >= 20) m.events20 += 1;
     } else if (r.activiteitstype === 'Voetbalkamp') {
-      m.kampen += omzetVan(r);
+      m.kampen += omzetDoel(r);
     }
   });
   return out;
@@ -127,6 +131,10 @@ function jaarKpi(regels, campagnes, jaar) {
   const maanden = dashboardMaanden(regels, jaar);
   return {
     verhuur: sum(maanden, (m) => m.verhuur),
+    zaalhuur: sum(maanden, (m) => m.zaalhuur),
+    fb: sum(maanden, (m) => m.fb),
+    nachten: sum(maanden, (m) => m.nachten),
+    hotel: sum(maanden, (m) => m.hotel),
     kampen: sum(maanden, (m) => m.kampen),
     totaal: sum(maanden, (m) => m.verhuur + m.kampen),
     boekingen: sum(maanden, (m) => m.boekingen),
@@ -134,7 +142,7 @@ function jaarKpi(regels, campagnes, jaar) {
     dagdelen: sum(maanden, (m) => m.dagdelen),
     herhaal: def.filter((r) => r.klanttype === 'Herhaalboeking').length,
     arr24: def.filter((r) => r.arrangement === ARRANGEMENT[2]).length,
-    attributie: sum(def.filter((r) => String(r.campagnecode || '').trim() !== ''), omzetVan),
+    attributie: sum(def.filter((r) => String(r.campagnecode || '').trim() !== ''), omzetDoel),
     marketingkosten: sum(campagnes.filter((c) => num(c.jaar) === jaar), (c) => num(c.kosten)),
     zonderType: regels.filter((r) => isDef(r) && jaarVan(r.bijeenkomst) === jaar && !r.activiteitstype).length,
   };
@@ -506,13 +514,15 @@ function renderDashboard() {
       h('span', { class: 'lbl', text: lbl }),
       h('span', { class: 'val', text: fmt(real) }),
       prog(real, doel, doelNu, extra.laag),
+      extra.extra ? h('span', { class: 'sub', text: extra.extra }) : null,
       h('span', { class: 'sub' }, sub, voor != null && doel ? h('span', { class: st, text: ' · ' + (extra.laag ? (real <= doelNu ? 'binnen budget' : 'boven budget tot nu') : (voor >= 0 ? 'voor op schema' : (extra.eur ? eurK(-voor) : fInt.format(-voor)) + ' achter op schema')) }) : null),
     );
   };
+  const infoKaart = (lbl, val, sub) => h('div', { class: 'kpi info' }, h('span', { class: 'lbl', text: lbl }), h('span', { class: 'val', text: val }), h('span', { class: 'sub', text: sub }));
   const tnTot = tn('verhuur') + tn('kampen');
   $('#d-kpis').replaceChildren(
     kaart('Totale omzet', k.totaal, som('verhuur') + som('kampen'), tnTot, eurK, { hero: true, eur: true }),
-    kaart('Verhuur en F&B', k.verhuur, som('verhuur'), tn('verhuur'), eurK, { eur: true }),
+    kaart('Verhuur en F&B', k.verhuur, som('verhuur'), tn('verhuur'), eurK, { eur: true, extra: 'Zaalhuur ' + eurK(k.zaalhuur) + ' · F&B ' + eurK(k.fb) }),
     kaart('Voetbalkampen', k.kampen, som('kampen'), tn('kampen'), eurK, { eur: true }),
     kaart('Vergaderboekingen', k.boekingen, som('boekingen'), tn('boekingen'), (v) => fInt.format(v)),
     kaart('Vergadergasten', k.gasten, som('gasten'), tn('gasten'), (v) => fInt.format(v)),
@@ -521,21 +531,25 @@ function renderDashboard() {
     kaart('24-uurs Meet, Eat & Sleep', k.arr24, num(D.jaar.arr24), null, (v) => fInt.format(v)),
     kaart('Omzet via campagnes', k.attributie, num(D.jaar.attributie), null, eurK, { eur: true }),
     kaart('Marketingkosten', k.marketingkosten, num(D.jaar.budget_plafond), tn('budget'), eurK, { laag: true }),
+    infoKaart('Hotelovernachtingen', fInt.format(k.nachten), 'Ter inzicht, geen doel'),
+    infoKaart('Omzet overnachtingen', eurK(k.hotel), 'Ter inzicht, telt niet mee in de doelen'),
   );
 
   const maanden = dashboardMaanden(S.regels, j);
   tekenOmzet(maanden, D);
 
   const t = $('#d-maanden');
-  const hd = h('tr', null, h('th', { text: 'Maand' }), ['Verhuur/F&B', 'Kampen', 'Boekingen', 'Gasten', 'Dagdelen'].map((x) => [h('th', { class: 'n', text: x }), h('th', { class: 'n hide-s', text: 'doel' })]), h('th', { class: 'n hide-s', text: 'Events 20+' }));
+  const hd = h('tr', null, h('th', { text: 'Maand' }), h('th', { class: 'n hide-s', text: 'Zaalhuur' }), h('th', { class: 'n hide-s', text: 'F&B' }), ['Verhuur/F&B', 'Kampen', 'Boekingen', 'Gasten', 'Dagdelen'].map((x) => [h('th', { class: 'n', text: x }), h('th', { class: 'n hide-s', text: 'doel' })]), h('th', { class: 'n hide-s', text: 'Events 20+' }), h('th', { class: 'n info', text: 'Overnachtingen' }), h('th', { class: 'n info', text: 'Omzet hotel' }));
+  const los = (v, fmt) => h('td', { class: 'n hide-s', text: fmt(v) });
+  const inz = (v, fmt) => h('td', { class: 'n info', text: fmt(v) });
   const cel = (real, doel, fmt) => [h('td', { class: 'n ' + (doel && real >= doel ? 'good' : ''), text: fmt(real) }), h('td', { class: 'n sm hide-s', text: fmt(doel) })];
-  const tot = { verhuur: 0, kampen: 0, boekingen: 0, gasten: 0, dagdelen: 0, events20: 0 };
+  const tot = { verhuur: 0, zaalhuur: 0, fb: 0, kampen: 0, boekingen: 0, gasten: 0, dagdelen: 0, events20: 0, nachten: 0, hotel: 0 };
   const body = maanden.map((m, i) => {
     const d = D.maanden[i];
     Object.keys(tot).forEach((x) => { tot[x] += m[x]; });
-    return h('tr', null, h('td', { text: MAANDEN[i] }), cel(m.verhuur, num(d.verhuur), fEur.format), cel(m.kampen, num(d.kampen), fEur.format), cel(m.boekingen, num(d.boekingen), fInt.format), cel(m.gasten, num(d.gasten), fInt.format), cel(m.dagdelen, num(d.dagdelen), fInt.format), h('td', { class: 'n hide-s', text: fInt.format(m.events20) }));
+    return h('tr', null, h('td', { text: MAANDEN[i] }), los(m.zaalhuur, fEur.format), los(m.fb, fEur.format), cel(m.verhuur, num(d.verhuur), fEur.format), cel(m.kampen, num(d.kampen), fEur.format), cel(m.boekingen, num(d.boekingen), fInt.format), cel(m.gasten, num(d.gasten), fInt.format), cel(m.dagdelen, num(d.dagdelen), fInt.format), h('td', { class: 'n hide-s', text: fInt.format(m.events20) }), inz(m.nachten, fInt.format), inz(m.hotel, fEur.format));
   });
-  body.push(h('tr', { class: 'tot' }, h('td', { text: 'Totaal' }), cel(tot.verhuur, som('verhuur'), fEur.format), cel(tot.kampen, som('kampen'), fEur.format), cel(tot.boekingen, som('boekingen'), fInt.format), cel(tot.gasten, som('gasten'), fInt.format), cel(tot.dagdelen, som('dagdelen'), fInt.format), h('td', { class: 'n hide-s', text: fInt.format(tot.events20) })));
+  body.push(h('tr', { class: 'tot' }, h('td', { text: 'Totaal' }), los(tot.zaalhuur, fEur.format), los(tot.fb, fEur.format), cel(tot.verhuur, som('verhuur'), fEur.format), cel(tot.kampen, som('kampen'), fEur.format), cel(tot.boekingen, som('boekingen'), fInt.format), cel(tot.gasten, som('gasten'), fInt.format), cel(tot.dagdelen, som('dagdelen'), fInt.format), h('td', { class: 'n hide-s', text: fInt.format(tot.events20) }), inz(tot.nachten, fInt.format), inz(tot.hotel, fEur.format)));
   t.replaceChildren(h('thead', null, hd), h('tbody', null, body));
 
   const arr = arrangementen(S.regels, j);
@@ -562,13 +576,14 @@ function renderDashboard() {
 function tekenOmzet(maanden, D) {
   const box = $('#d-chart');
   $('#d-legend').replaceChildren(
-    h('span', null, h('i', { class: 'sw', style: 'background:var(--accent)' }), 'Verhuur en F&B'),
+    h('span', null, h('i', { class: 'sw', style: 'background:var(--accent)' }), 'Zaalhuur'),
+    h('span', null, h('i', { class: 'sw', style: 'background:var(--c3)' }), 'F&B'),
     h('span', null, h('i', { class: 'sw', style: 'background:var(--c2)' }), 'Voetbalkampen'),
     h('span', null, h('i', { class: 'dashsw' }), 'Doel totaal'),
   );
   const W = box.clientWidth; if (!W) return;
   const H = 260, mb = 24, mt = 10;
-  const data = maanden.map((m, i) => ({ i, v: m.verhuur, k: m.kampen, d: num(D.maanden[i].verhuur) + num(D.maanden[i].kampen) }));
+  const data = maanden.map((m, i) => ({ i, v: m.verhuur, z: m.zaalhuur, f: m.verhuur - m.zaalhuur, k: m.kampen, d: num(D.maanden[i].verhuur) + num(D.maanden[i].kampen) }));
   const max = Math.max(1, ...data.map((x) => Math.max(x.v + x.k, x.d))) * 1.08;
   const ns = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(ns, 'svg'); svg.setAttribute('width', '100%'); svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'Omzet per maand tegen doel');
@@ -585,7 +600,8 @@ function tekenOmzet(maanden, D) {
   data.forEach((x) => {
     const cx = ml + bandW * x.i + bandW / 2;
     if (!smal || x.i % 2 === 0) el('text', { x: cx, y: H - 6, 'text-anchor': 'middle' }, MKORT[x.i]);
-    if (x.v > 0) el('rect', { x: cx - bw / 2, y: y(x.v), width: bw, height: Math.max(0, y(0) - y(x.v)), fill: 'var(--accent)', rx: 3 });
+    if (x.z > 0) el('rect', { x: cx - bw / 2, y: y(x.z), width: bw, height: Math.max(0, y(0) - y(x.z)), fill: 'var(--accent)', rx: 3 });
+    if (x.f > 0) el('rect', { x: cx - bw / 2, y: y(x.v), width: bw, height: Math.max(0, y(x.z) - y(x.v)), fill: 'var(--c3)', rx: 3 });
     if (x.k > 0) el('rect', { x: cx - bw / 2, y: y(x.v + x.k), width: bw, height: Math.max(0, y(x.v) - y(x.v + x.k)), fill: 'var(--c2)', rx: 3 });
     if (x.d > 0) el('line', { x1: cx - bw / 2 - 4, x2: cx + bw / 2 + 4, y1: y(x.d), y2: y(x.d), stroke: 'var(--fg)', 'stroke-width': 2, 'stroke-dasharray': '4 3' });
   });
@@ -594,7 +610,7 @@ function tekenOmzet(maanden, D) {
   data.forEach((x) => {
     const r = el('rect', { x: ml + bandW * x.i, y: 0, width: bandW, height: H - mb, fill: 'transparent' });
     r.addEventListener('mousemove', () => {
-      tip.replaceChildren(h('div', { class: 't', text: MAANDEN[x.i] }), h('div', { text: 'Verhuur en F&B: ' + fEur.format(x.v) }), h('div', { text: 'Voetbalkampen: ' + fEur.format(x.k) }), h('div', { text: 'Doel: ' + fEur.format(x.d) }), x.d ? h('div', { text: 'Gerealiseerd: ' + fPct.format((x.v + x.k) / x.d) }) : null);
+      tip.replaceChildren(h('div', { class: 't', text: MAANDEN[x.i] }), h('div', { text: 'Zaalhuur: ' + fEur.format(x.z) }), h('div', { text: 'F&B: ' + fEur.format(x.f) }), h('div', { text: 'Voetbalkampen: ' + fEur.format(x.k) }), h('div', { text: 'Doel: ' + fEur.format(x.d) }), x.d ? h('div', { text: 'Gerealiseerd: ' + fPct.format((x.v + x.k) / x.d) }) : null);
       tip.hidden = false;
       const scale = box.clientWidth / W;
       const left = (ml + bandW * x.i + bandW / 2) * scale - tip.offsetWidth / 2;

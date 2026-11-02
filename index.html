@@ -88,6 +88,8 @@ input:disabled, select:disabled, textarea:disabled { background: var(--soft); }
 .kpi .val { font-family: var(--font-display); font-weight: 500; font-size: 26px; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .kpi .sub { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .kpi.hero { grid-column: span 2; }
+.kpi.info { background: transparent; border-style: dashed; }
+th.info, td.info { color: var(--muted); }
 @media (max-width: 520px) { .kpi.hero { grid-column: auto; } }
 .kpi.hero .val { font-size: 36px; }
 .prog { position: relative; height: 8px; background: var(--soft); border-radius: 4px; overflow: visible; }
@@ -207,7 +209,7 @@ body { margin: 0; }
       <h2 class="grow">Realisatie tegen doel</h2>
       <select id="d-jaar" aria-label="Rapportagejaar" style="width:auto"></select>
     </div>
-    <p class="help" style="margin:0">Telt definitieve boekingen op de datum van de bijeenkomst. Het streepje op elke balk is waar je volgens de maanddoelen nu zou moeten staan.</p>
+    <p class="help" style="margin:0">Telt definitieve boekingen op de datum van de bijeenkomst. Omzet tegen de doelen is zaalhuur plus F&amp;B. Hotelovernachtingen staan er apart bij, ter inzicht, en tellen niet mee in de doelen. Het streepje op elke balk is waar je volgens de maanddoelen nu zou moeten staan.</p>
     <div id="d-note"></div>
     <div class="kpis" id="d-kpis"></div>
     <div class="card">
