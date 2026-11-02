@@ -53,7 +53,7 @@ const FIELDS = [
 /* Doelen 2027 uit het tabblad KPI-dashboard en KPI-plan, als startpunt */
 function legeDoelen() {
   return {
-    maanden: Array.from({ length: 12 }, () => ({ verhuur: 0, kampen: 0, boekingen: 0, gasten: 0, dagdelen: 0, budget: 0 })),
+    maanden: Array.from({ length: 12 }, () => ({ verhuur: 0, kampen: 0, boekingen: 0, gasten: 0, dagdelen: 0, budget: 0, zaalhuur: 0, fb: 0 })),
     jaar: { herhaal: 0, arr24: 0, attributie: 0, budget_plafond: 0 },
     arrangementen: {},
   };
@@ -147,6 +147,11 @@ function jaarKpi(regels, campagnes, jaar) {
     zonderType: regels.filter((r) => isDef(r) && jaarVan(r.bijeenkomst) === jaar && !r.activiteitstype).length,
   };
 }
+
+/* Zijn zaalhuur en F&B als losse doelen ingevuld? Anders geldt nog het oude totaal Verhuur en F&B */
+const maandGesplitst = (m) => num(m.zaalhuur) + num(m.fb) > 0;
+const nogNietVerdeeld = (D) => (D.maanden || []).filter((m) => !maandGesplitst(m) && num(m.verhuur) > 0).length;
+const doelGesplitst = (D) => (D.maanden || []).some(maandGesplitst) && nogNietVerdeeld(D) === 0;
 
 /* Doel tot en met vandaag (maanden pro rata) */
 function doelTotNu(doelen, jaar, veld, vandaag) {
@@ -528,8 +533,9 @@ function renderDashboard() {
   const tnTot = tn('verhuur') + tn('kampen');
   $('#d-kpis').replaceChildren(
     kaart('Totale omzet', k.totaal, som('verhuur') + som('kampen'), tnTot, eurK, { hero: true, eur: true }),
-    kaart('Zaalhuur', k.zaalhuur, som('verhuur'), tn('verhuur'), eurK, { eur: true, deel: k.verhuur }),
-    kaart('F&B', k.fb, som('verhuur'), tn('verhuur'), eurK, { eur: true, deel: k.verhuur }),
+    ...(doelGesplitst(D)
+      ? [kaart('Zaalhuur', k.zaalhuur, som('zaalhuur'), tn('zaalhuur'), eurK, { eur: true }), kaart('F&B', k.fb, som('fb'), tn('fb'), eurK, { eur: true })]
+      : [kaart('Zaalhuur', k.zaalhuur, som('verhuur'), tn('verhuur'), eurK, { eur: true, deel: k.verhuur }), kaart('F&B', k.fb, som('verhuur'), tn('verhuur'), eurK, { eur: true, deel: k.verhuur })]),
     kaart('Voetbalkampen', k.kampen, som('kampen'), tn('kampen'), eurK, { eur: true }),
     kaart('Vergaderboekingen', k.boekingen, som('boekingen'), tn('boekingen'), (v) => fInt.format(v)),
     kaart('Vergadergasten', k.gasten, som('gasten'), tn('gasten'), (v) => fInt.format(v)),
@@ -546,17 +552,16 @@ function renderDashboard() {
   tekenOmzet(maanden, D);
 
   const t = $('#d-maanden');
-  const hd = h('tr', null, h('th', { text: 'Maand' }), h('th', { class: 'n hide-s', text: 'Zaalhuur' }), h('th', { class: 'n hide-s', text: 'F&B' }), ['Verhuur/F&B', 'Kampen', 'Boekingen', 'Gasten', 'Dagdelen'].map((x) => [h('th', { class: 'n', text: x }), h('th', { class: 'n hide-s', text: 'doel' })]), h('th', { class: 'n hide-s', text: 'Events 20+' }), h('th', { class: 'n info', text: 'Overnachtingen' }), h('th', { class: 'n info', text: 'Omzet hotel' }));
-  const los = (v, fmt) => h('td', { class: 'n hide-s', text: fmt(v) });
+  const hd = h('tr', null, h('th', { text: 'Maand' }), ['Zaalhuur', 'F&B'].map((x) => [h('th', { class: 'n', text: x }), h('th', { class: 'n hide-s', text: 'doel' })]), ['Verhuur/F&B', 'Kampen', 'Boekingen', 'Gasten', 'Dagdelen'].map((x) => [h('th', { class: 'n', text: x }), h('th', { class: 'n hide-s', text: 'doel' })]), h('th', { class: 'n hide-s', text: 'Events 20+' }), h('th', { class: 'n info', text: 'Overnachtingen' }), h('th', { class: 'n info', text: 'Omzet hotel' }));
   const inz = (v, fmt) => h('td', { class: 'n info', text: fmt(v) });
   const cel = (real, doel, fmt) => [h('td', { class: 'n ' + (doel && real >= doel ? 'good' : ''), text: fmt(real) }), h('td', { class: 'n sm hide-s', text: fmt(doel) })];
   const tot = { verhuur: 0, zaalhuur: 0, fb: 0, kampen: 0, boekingen: 0, gasten: 0, dagdelen: 0, events20: 0, nachten: 0, hotel: 0 };
   const body = maanden.map((m, i) => {
     const d = D.maanden[i];
     Object.keys(tot).forEach((x) => { tot[x] += m[x]; });
-    return h('tr', null, h('td', { text: MAANDEN[i] }), los(m.zaalhuur, fEur.format), los(m.fb, fEur.format), cel(m.verhuur, num(d.verhuur), fEur.format), cel(m.kampen, num(d.kampen), fEur.format), cel(m.boekingen, num(d.boekingen), fInt.format), cel(m.gasten, num(d.gasten), fInt.format), cel(m.dagdelen, num(d.dagdelen), fInt.format), h('td', { class: 'n hide-s', text: fInt.format(m.events20) }), inz(m.nachten, fInt.format), inz(m.hotel, fEur.format));
+    return h('tr', null, h('td', { text: MAANDEN[i] }), cel(m.zaalhuur, num(d.zaalhuur), fEur.format), cel(m.fb, num(d.fb), fEur.format), cel(m.verhuur, num(d.verhuur), fEur.format), cel(m.kampen, num(d.kampen), fEur.format), cel(m.boekingen, num(d.boekingen), fInt.format), cel(m.gasten, num(d.gasten), fInt.format), cel(m.dagdelen, num(d.dagdelen), fInt.format), h('td', { class: 'n hide-s', text: fInt.format(m.events20) }), inz(m.nachten, fInt.format), inz(m.hotel, fEur.format));
   });
-  body.push(h('tr', { class: 'tot' }, h('td', { text: 'Totaal' }), los(tot.zaalhuur, fEur.format), los(tot.fb, fEur.format), cel(tot.verhuur, som('verhuur'), fEur.format), cel(tot.kampen, som('kampen'), fEur.format), cel(tot.boekingen, som('boekingen'), fInt.format), cel(tot.gasten, som('gasten'), fInt.format), cel(tot.dagdelen, som('dagdelen'), fInt.format), h('td', { class: 'n hide-s', text: fInt.format(tot.events20) }), inz(tot.nachten, fInt.format), inz(tot.hotel, fEur.format)));
+  body.push(h('tr', { class: 'tot' }, h('td', { text: 'Totaal' }), cel(tot.zaalhuur, som('zaalhuur'), fEur.format), cel(tot.fb, som('fb'), fEur.format), cel(tot.verhuur, som('verhuur'), fEur.format), cel(tot.kampen, som('kampen'), fEur.format), cel(tot.boekingen, som('boekingen'), fInt.format), cel(tot.gasten, som('gasten'), fInt.format), cel(tot.dagdelen, som('dagdelen'), fInt.format), h('td', { class: 'n hide-s', text: fInt.format(tot.events20) }), inz(tot.nachten, fInt.format), inz(tot.hotel, fEur.format)));
   t.replaceChildren(h('thead', null, hd), h('tbody', null, body));
 
   const arr = arrangementen(S.regels, j);
@@ -714,7 +719,7 @@ $('#m-nieuw').addEventListener('click', async () => {
 });
 
 /* ===== Doelen ===== */
-const DOELKOL = [['verhuur', 'Verhuur en F&B', 'eur'], ['kampen', 'Voetbalkampen', 'eur'], ['boekingen', 'Vergaderboekingen', 'int'], ['gasten', 'Vergadergasten', 'int'], ['dagdelen', 'Dagdelen', 'int'], ['budget', 'Marketingbudget', 'eur']];
+const DOELKOL = [['zaalhuur', 'Zaalhuur', 'eur'], ['fb', 'F&B', 'eur'], ['kampen', 'Voetbalkampen', 'eur'], ['boekingen', 'Vergaderboekingen', 'int'], ['gasten', 'Vergadergasten', 'int'], ['dagdelen', 'Dagdelen', 'int'], ['budget', 'Marketingbudget', 'eur']];
 const JAARKOL = [['herhaal', 'Herhaalboekingen', 'int'], ['arr24', '24-uurs arrangementen', 'int'], ['attributie', 'Omzet via campagnes', 'eur'], ['budget_plafond', 'Marketingbudget jaarplafond', 'eur']];
 let doelenVuil = false;
 function renderDoelen() {
@@ -732,12 +737,22 @@ function renderDoelen() {
   }
   const inp = (v, t, lbl, pad) => h('input', { class: 'doel-in', type: 'text', inputmode: 'decimal', value: v ? (t === 'eur' ? String(v).replace('.', ',') : String(v)) : '', 'aria-label': lbl, disabled: ro, 'data-pad': pad, 'data-t': t, oninput: () => { doelenVuil = true; } });
   const maandTabel = h('table', null,
-    h('thead', null, h('tr', null, h('th', { text: 'Maand' }), DOELKOL.map(([, l]) => h('th', { class: 'n', text: l })))),
-    h('tbody', null, MAANDEN.map((m, i) => h('tr', null, h('td', { text: m }), DOELKOL.map(([k, l, t]) => h('td', null, inp(D.maanden[i][k], t, l + ' ' + m, 'maanden.' + i + '.' + k))))),
-      h('tr', { class: 'tot' }, h('td', { text: 'Totaal' }), DOELKOL.map(([k, , t]) => h('td', { class: 'n', text: (t === 'eur' ? fEur : fInt).format(sum(D.maanden, (x) => num(x[k]))) })))));
+    h('thead', null, h('tr', null, h('th', { text: 'Maand' }), DOELKOL.slice(0, 2).map(([, l]) => h('th', { class: 'n', text: l })), h('th', { class: 'n', text: 'Samen' }), DOELKOL.slice(2).map(([, l]) => h('th', { class: 'n', text: l })))),
+    h('tbody', null, MAANDEN.map((m, i) => {
+      const samen = h('td', { class: 'n sm', text: fEur.format(num(D.maanden[i].verhuur)) });
+      const rij = h('tr', null, h('td', { text: m }), DOELKOL.slice(0, 2).map(([k, l, t]) => h('td', null, inp(D.maanden[i][k], t, l + ' ' + m, 'maanden.' + i + '.' + k))), samen, DOELKOL.slice(2).map(([k, l, t]) => h('td', null, inp(D.maanden[i][k], t, l + ' ' + m, 'maanden.' + i + '.' + k))));
+      // Samen rekent mee tijdens het typen
+      rij.addEventListener('input', () => { const w = (k) => { const v = leesVeld({ t: 'eur' }, rij.querySelector('[data-pad="maanden.' + i + '.' + k + '"]').value); return Number.isNaN(v) ? 0 : num(v); }; const s = w('zaalhuur') + w('fb'); samen.textContent = fEur.format(s || num(D.maanden[i].verhuur)); });
+      return rij;
+    }),
+      h('tr', { class: 'tot' }, h('td', { text: 'Totaal' }), DOELKOL.slice(0, 2).map(([k]) => h('td', { class: 'n', text: fEur.format(sum(D.maanden, (x) => num(x[k]))) })), h('td', { class: 'n', text: fEur.format(sum(D.maanden, (x) => num(x.verhuur))) }), DOELKOL.slice(2).map(([k, , t]) => h('td', { class: 'n', text: (t === 'eur' ? fEur : fInt).format(sum(D.maanden, (x) => num(x[k]))) })))));
+  const open = nogNietVerdeeld(D);
+  const oud = open
+    ? h('div', { class: 'note', text: (open === 12 ? 'Het doel voor verhuur en F&B is nog één bedrag per maand (kolom Samen). ' : 'In ' + open + (open === 1 ? ' maand' : ' maanden') + ' is het doel voor verhuur en F&B nog niet verdeeld (kolom Samen). ') + 'Verdeel het over zaalhuur en F&B en klik op Doelen opslaan. Een maand die nog niet verdeeld is, houdt het oude bedrag. Zodra alle maanden verdeeld zijn, krijgen Zaalhuur en F&B op het dashboard elk hun eigen doel.' })
+    : null;
   const jaarVelden = h('fieldset', null, h('legend', { text: 'Jaardoelen' }), JAARKOL.map(([k, l, t]) => h('div', { class: 'field' }, h('label', { text: l }), inp(D.jaar[k], t, l, 'jaar.' + k))));
   const arrVelden = h('fieldset', null, h('legend', { text: 'Arrangementen (boekingen per jaar)' }), ARRANGEMENT.map((a) => h('div', { class: 'field' }, h('label', { text: ARR_KORT[a] }), inp((D.arrangementen || {})[a], 'int', ARR_KORT[a], 'arr.' + ARRANGEMENT.indexOf(a)))));
-  box.replaceChildren(h('div', { class: 'card' }, h('h3', { text: 'Maanddoelen ' + j }), h('div', { class: 'tbl-wrap' }, maandTabel)), jaarVelden, arrVelden);
+  box.replaceChildren(h('div', { class: 'card' }, h('h3', { text: 'Maanddoelen ' + j }), oud, h('div', { class: 'tbl-wrap' }, maandTabel)), jaarVelden, arrVelden);
 }
 $('#g-jaar').addEventListener('change', () => { doelenVuil = false; renderDoelen(); });
 $('#g-opslaan').addEventListener('click', async () => {
@@ -755,6 +770,7 @@ $('#g-opslaan').addEventListener('click', async () => {
     else if (p[0] === 'arr') D.arrangementen[ARRANGEMENT[Number(p[1])]] = val;
   });
   if (fout) { fout.focus(); toast('Er staat een ongeldig getal in ' + fout.getAttribute('aria-label') + '.'); return; }
+  D.maanden.forEach((m) => { if (maandGesplitst(m)) m.verhuur = num(m.zaalhuur) + num(m.fb); });
   D.gewijzigd = new Date().toISOString();
   try { await S.db.collection('doelen').doc(String(j)).set(D); doelenVuil = false; toast('Doelen ' + j + ' opgeslagen'); renderAll(); }
   catch (e) { schrijfFout(e); }
@@ -1084,14 +1100,14 @@ function itemNaarDoelen(it) {
   const c = cv(it); let raw = null; try { raw = JSON.parse(c.doelen || ''); } catch (e) { raw = null; }
   const D = legeDoelen(); D._id = String(it.id);
   if (raw && Array.isArray(raw.m)) {
-    raw.m.forEach((m, i) => { if (D.maanden[i]) ['verhuur', 'kampen', 'boekingen', 'gasten', 'dagdelen', 'budget'].forEach((k, j) => { D.maanden[i][k] = num(m[j]); }); });
+    raw.m.forEach((m, i) => { if (D.maanden[i]) ['verhuur', 'kampen', 'boekingen', 'gasten', 'dagdelen', 'budget', 'zaalhuur', 'fb'].forEach((k, j) => { D.maanden[i][k] = num(m[j]); }); });
     const j = raw.j || []; D.jaar = { herhaal: num(j[0]), arr24: num(j[1]), attributie: num(j[2]), budget_plafond: num(j[3]) };
     ARRANGEMENT.forEach((a, i) => { D.arrangementen[a] = num((raw.a || [])[i]); });
   }
   return D;
 }
 function doelenNaarTekst(D) {
-  return JSON.stringify({ m: D.maanden.map((m) => ['verhuur', 'kampen', 'boekingen', 'gasten', 'dagdelen', 'budget'].map((k) => num(m[k]))), j: [num(D.jaar.herhaal), num(D.jaar.arr24), num(D.jaar.attributie), num(D.jaar.budget_plafond)], a: ARRANGEMENT.map((a) => num((D.arrangementen || {})[a])) });
+  return JSON.stringify({ m: D.maanden.map((m) => ['verhuur', 'kampen', 'boekingen', 'gasten', 'dagdelen', 'budget', 'zaalhuur', 'fb'].map((k) => num(m[k]))), j: [num(D.jaar.herhaal), num(D.jaar.arr24), num(D.jaar.attributie), num(D.jaar.budget_plafond)], a: ARRANGEMENT.map((a) => num((D.arrangementen || {})[a])) });
 }
 
 /* Velden naar kolomwaarden */
