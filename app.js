@@ -11,7 +11,7 @@ const ARR_KORT = {
   '12-uurs vergaderarrangement incl. lunch en diner': '12-uurs lunch/diner',
   'Overig / maatwerk': 'Overig / maatwerk',
 };
-const HERKOMST = ['All Stars landingpagina', 'Intern / salesmanager', 'Otium website door gast', 'Telefonisch', 'E-mail', 'Netwerk / relatie', 'Social media', 'Partner / intermediair', 'Terugkerende gast', 'Anders'];
+const HERKOMST = ['All Stars landingpagina', 'Intern / salesmanager', 'Otium website door gast', 'Telefonisch', 'E-mail', 'LinkedIn', 'Social media', 'Netwerk / relatie', 'Partner / intermediair', 'Terugkerende gast', 'Anders'];
 const ACTIVITEIT = ['Vergadering', 'Voetbalkamp'];
 const KLANTTYPE = ['Nieuwe klant', 'Herhaalboeking'];
 const ACCOUNT = ['Topaccount', 'Middelgroot account', 'Klein account'];
@@ -29,11 +29,12 @@ const FIELDS = [
   { k: 'organisatie', l: 'Organisatie', t: 'text', g: 'Klant', req: true, list: 'lijst-org' },
   { k: 'contactpersoon', l: 'Contactpersoon', t: 'text', g: 'Klant' },
   { k: 'doelgroep', l: 'Bron / doelgroep', t: 'select', g: 'Klant', opts: DOELGROEP },
-  { k: 'herkomst', l: 'Herkomst lead', t: 'select', g: 'Klant', opts: HERKOMST },
+  { k: 'herkomst', l: 'Herkomst lead', t: 'select', g: 'Klant', req: true, opts: HERKOMST, hint: 'De bron van de aanvraag, bijvoorbeeld e-mail, LinkedIn of social media' },
   { k: 'campagnecode', l: 'Campagnecode', t: 'text', g: 'Klant', list: 'lijst-codes', hint: 'Precies zoals in Marketing' },
   { k: 'klanttype', l: 'Nieuwe / herhaalboeking', t: 'select', g: 'Klant', opts: KLANTTYPE },
   { k: 'accountcategorie', l: 'Accountcategorie', t: 'select', g: 'Klant', opts: ACCOUNT },
-  { k: 'bijeenkomst', l: 'Datum bijeenkomst', t: 'date', g: 'Bijeenkomst' },
+  { k: 'bijeenkomst', l: 'Datum bijeenkomst', t: 'date', g: 'Bijeenkomst', hint: 'Bij meerdere dagen: de eerste dag' },
+  { k: 'extra_dagen', l: 'Extra vergaderdagen', t: 'dagen', g: 'Bijeenkomst', wide: true, hint: 'Vergadert de partij meerdere dagen? Voeg de andere dagen hier toe, dan blijft het één order. Zet zaalhuur, F&B, dagdelen en overnachtingen voor alle dagen samen in deze regel.' },
   { k: 'activiteitstype', l: 'Activiteitstype', t: 'select', g: 'Bijeenkomst', opts: ACTIVITEIT, hint: 'Nodig om mee te tellen in het dashboard' },
   { k: 'arrangement', l: 'Arrangement', t: 'select', g: 'Bijeenkomst', opts: ARRANGEMENT, wide: true },
   { k: 'personen', l: 'Aantal personen', t: 'int', g: 'Bijeenkomst' },
@@ -68,6 +69,9 @@ const omzetVan = (r) => num(r.zaalhuur) + num(r.fb) + num(r.omzet_overnachtingen
 /* Omzet die meetelt voor de doelen: zaalhuur en F&B, zonder hotelovernachtingen */
 const omzetDoel = (r) => num(r.zaalhuur) + num(r.fb);
 const isDef = (r) => r.status === 'Definitief';
+/* Meerdaagse vergadering: extra dagen staan als 'jjjj-mm-dd,jjjj-mm-dd' in extra_dagen */
+const extraDagen = (r) => String((r && r.extra_dagen) || '').split(/[,;\s]+/).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+const laatsteDag = (r) => [r.bijeenkomst, ...extraDagen(r)].filter(Boolean).sort().pop() || null;
 const sum = (a, f) => a.reduce((s, x) => s + f(x), 0);
 
 function isoWeek(dstr) {
@@ -93,14 +97,15 @@ function werkdagenTussen(a, b) {
 /* Wat er aan een regel ontbreekt om goed mee te tellen */
 function signalen(r, vandaag) {
   const s = [];
+  if (!r.herkomst) s.push('Bron van de aanvraag (herkomst lead) ontbreekt');
   if (isDef(r)) {
     if (!r.activiteitstype) s.push('Activiteitstype ontbreekt, telt niet mee in het dashboard');
     if (!r.bijeenkomst) s.push('Datum bijeenkomst ontbreekt');
     if (omzetVan(r) === 0) s.push('Omzet niet uitgesplitst in zaalhuur, F&B en overnachtingen');
     if (r.activiteitstype === 'Vergadering' && !num(r.dagdelen)) s.push('Aantal dagdelen ontbreekt');
     if (!r.klanttype) s.push('Nieuwe / herhaalboeking ontbreekt');
-    if ((r.accountcategorie === 'Topaccount' || r.accountcategorie === 'Middelgroot account') && r.bijeenkomst && r.bijeenkomst <= vandaag && r.vervolg_verstuurd !== 'Ja') {
-      const wd = werkdagenTussen(r.bijeenkomst, vandaag);
+    if ((r.accountcategorie === 'Topaccount' || r.accountcategorie === 'Middelgroot account') && r.bijeenkomst && laatsteDag(r) <= vandaag && r.vervolg_verstuurd !== 'Ja') {
+      const wd = werkdagenTussen(laatsteDag(r), vandaag);
       if (wd != null && wd > 10) s.push('Vervolgaanbod nog niet verstuurd, ' + wd + ' werkdagen na de bijeenkomst');
     }
   }
@@ -184,8 +189,8 @@ function accounts(regels, jaar, vandaag) {
     const def = regels.filter((r) => isDef(r) && r.accountcategorie === cat && jaarVan(r.bijeenkomst) === jaar);
     const orgs = new Map();
     def.forEach((r) => { const k = String(r.organisatie || '').trim().toLowerCase(); if (k) orgs.set(k, (orgs.get(k) || 0) + 1); });
-    const geweest = def.filter((r) => r.bijeenkomst && r.bijeenkomst <= vandaag);
-    const opTijd = geweest.filter((r) => r.vervolg_verstuurd === 'Ja' && r.vervolg_datum && werkdagenTussen(r.bijeenkomst, r.vervolg_datum) <= 10).length;
+    const geweest = def.filter((r) => r.bijeenkomst && laatsteDag(r) <= vandaag);
+    const opTijd = geweest.filter((r) => r.vervolg_verstuurd === 'Ja' && r.vervolg_datum && werkdagenTussen(laatsteDag(r), r.vervolg_datum) <= 10).length;
     return {
       categorie: cat,
       accounts: orgs.size,
@@ -361,7 +366,7 @@ function renderInvoer() {
       h('td', null, h('span', { text: r.organisatie || '' }), sig.length ? h('span', { class: 'flag', title: sig.join('\n'), 'aria-label': sig.length + ' aandachtspunten', text: '!' }) : null, r.contactpersoon ? h('div', { class: 'sm', text: r.contactpersoon }) : null),
       h('td', { class: 'hide-s', text: r.salesmedewerker || '' }),
       h('td', null, stCel),
-      h('td', { class: 'hide-s', text: fDatum(r.bijeenkomst) }),
+      h('td', { class: 'hide-s', text: fDatum(r.bijeenkomst) + (extraDagen(r).length ? ' (' + (extraDagen(r).length + 1) + ' dagen)' : '') }),
       h('td', { class: 'hide-s sm', text: ARR_KORT[r.arrangement] || r.arrangement || '' }),
       h('td', { class: 'n hide-s', text: r.personen ? fInt.format(r.personen) : '' }),
       h('td', { class: 'n' }, bedrag ? fEur.format(bedrag) : '', h('div', { class: 'sm', text: isDef(r) && omzetVan(r) ? 'omzet' : bedrag ? 'offerte' : '' })),
@@ -390,6 +395,31 @@ function leesVeld(f, raw) {
   return s;
 }
 
+/* Lijst met extra vergaderdagen; .value geeft en neemt 'jjjj-mm-dd,jjjj-mm-dd' */
+function dagenVeld(id, ro) {
+  const lijst = h('div', { style: 'display:flex;flex-wrap:wrap;gap:8px' });
+  const box = h('div', { id, style: 'display:grid;gap:8px' });
+  const plus = h('button', { class: 'btn', type: 'button', text: '+ Vergaderdag toevoegen' });
+  const regel = (d) => {
+    const inp = h('input', { type: 'date', min: '2000-01-01', max: '2099-12-31', value: d || '', 'aria-label': 'Extra vergaderdag', style: 'width:auto' });
+    const weg = h('button', { class: 'btn', type: 'button', text: '×', 'aria-label': 'Dag verwijderen', title: 'Dag verwijderen' });
+    const rij = h('span', { style: 'display:inline-flex;gap:4px;align-items:center' }, inp, weg);
+    weg.addEventListener('click', () => { rij.remove(); box.dispatchEvent(new Event('change')); });
+    inp.addEventListener('change', () => box.dispatchEvent(new Event('change')));
+    inp.disabled = ro; weg.hidden = ro;
+    lijst.append(rij);
+    return inp;
+  };
+  plus.addEventListener('click', () => { const vorige = [...lijst.querySelectorAll('input')].map((x) => x.value).filter(Boolean).sort().pop() || ($('#v-bijeenkomst') || {}).value; let d = ''; if (vorige) { const t = new Date(vorige + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + 1); d = t.toISOString().slice(0, 10); } regel(d).focus(); });
+  box.append(lijst, plus);
+  Object.defineProperty(box, 'value', {
+    get: () => [...new Set([...lijst.querySelectorAll('input')].map((x) => x.value).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))].sort().join(','),
+    set: (v) => { lijst.replaceChildren(); extraDagen({ extra_dagen: v }).forEach((d) => regel(d)); },
+  });
+  Object.defineProperty(box, 'disabled', { get: () => ro, set: (x) => { plus.hidden = !!x; } });
+  return box;
+}
+
 function openSheet(r) {
   S.editing = r ? r.id : 'nieuw';
   const ro = !magSchrijven();
@@ -411,6 +441,7 @@ function openSheet(r) {
     else if (f.t === 'date') inp = h('input', { id, type: 'date', min: '2000-01-01', max: '2099-12-31' });
     else if (f.t === 'int') inp = h('input', { id, type: 'number', min: '0', step: '1', inputmode: 'numeric' });
     else if (f.t === 'eur') inp = h('input', { id, type: 'text', inputmode: 'decimal', placeholder: '€' });
+    else if (f.t === 'dagen') inp = dagenVeld(id, ro);
     else inp = h('input', { id, type: 'text', list: f.list || null, autocomplete: 'off' });
     inp.value = veldWaarde(f, start);
     if (f.t === 'select' && start[f.k] && !f.opts.includes(start[f.k])) { inp.append(h('option', { value: start[f.k], text: start[f.k] })); inp.value = start[f.k]; }
@@ -451,6 +482,8 @@ function openSheet(r) {
       if (f.req && (v == null || v === '')) fout.push(f.l + ' is verplicht');
       doc[f.k] = Number.isNaN(v) ? null : v;
     });
+    if (doc.extra_dagen) { const ex = extraDagen(doc).filter((d) => d !== doc.bijeenkomst); doc.extra_dagen = ex.length ? ex.join(',') : null; }
+    if (doc.extra_dagen && !doc.bijeenkomst) fout.push('Datum bijeenkomst is verplicht als er extra vergaderdagen zijn');
     if (fout.length) { msg.className = 'msg err'; msg.textContent = fout[0]; inputs[FIELDS.find((f) => fout[0].startsWith(f.l)).k].focus(); return; }
     const nu = new Date().toISOString();
     doc.gewijzigd = nu; doc.gewijzigd_door = S.uid || null;
